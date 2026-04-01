@@ -151,7 +151,7 @@ func CertProviderConfig() string {
 	}
 	return fmt.Sprintf(`
 		provider "stackit" {
-			cart_custom_endpoint = "%s"
+			alb_certificates_custom_endpoint = "%s"
 		}`,
 		CertCustomEndpoint,
 	)

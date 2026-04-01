@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -18,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/stackitcloud/stackit-sdk-go/core/oapierror"
-	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates"
+	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates/v2api"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/conversion"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	certUtils "github.com/stackitcloud/terraform-provider-stackit/stackit/internal/services/albcertificates/utils"
@@ -113,7 +112,7 @@ func (r *certificatesResource) Schema(_ context.Context, _ resource.SchemaReques
 		"id":          "Terraform's internal resource ID. It is structured as `project_id`,`region`,`cert_id`.",
 		"project_id":  "STACKIT project ID to which the certificate is associated.",
 		"region":      "The resource region (e.g. eu01). If not defined, the provider region is used.",
-		"cert-id":     "The ID of the certificate.",
+		"cert_id":     "The ID of the certificate.",
 		"name":        "Certificate name.",
 		"private_key": "The PEM encoded private key part",
 		"public_key":  "The PEM encoded public key part",
@@ -151,7 +150,6 @@ The example below creates the supporting infrastructure using the STACKIT Terraf
 				Computed: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
-					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
@@ -168,7 +166,7 @@ The example below creates the supporting infrastructure using the STACKIT Terraf
 				},
 			},
 			"cert_id": schema.StringAttribute{
-				Description: descriptions["cert-id"],
+				Description: descriptions["cert_id"],
 				Computed:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -223,7 +221,7 @@ func (r *certificatesResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	// Create a new Certificate
-	createResp, err := r.client.CreateCertificate(ctx, projectId, region).CreateCertificatePayload(*payload).Execute()
+	createResp, err := r.client.DefaultAPI.CreateCertificate(ctx, projectId, region).CreateCertificatePayload(*payload).Execute()
 	if err != nil {
 		errStr := utils.PrettyApiErr(ctx, &resp.Diagnostics, err)
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error creating Certificate", fmt.Sprintf("Calling API for create: %v", errStr))
@@ -273,7 +271,7 @@ func (r *certificatesResource) Read(ctx context.Context, req resource.ReadReques
 	ctx = tflog.SetField(ctx, "region", region)
 	ctx = tflog.SetField(ctx, "cert_id", certId)
 
-	readResp, err := r.client.GetCertificate(ctx, projectId, region, certId).Execute()
+	readResp, err := r.client.DefaultAPI.GetCertificate(ctx, projectId, region, certId).Execute()
 	if err != nil {
 		var oapiErr *oapierror.GenericOpenAPIError
 		if errors.As(err, &oapiErr) {
@@ -329,7 +327,7 @@ func (r *certificatesResource) Delete(ctx context.Context, req resource.DeleteRe
 	ctx = tflog.SetField(ctx, "region", region)
 
 	// Delete Certificate
-	_, err := r.client.DeleteCertificate(ctx, projectId, region, certId).Execute()
+	_, err := r.client.DefaultAPI.DeleteCertificate(ctx, projectId, region, certId).Execute()
 	if err != nil {
 		errStr := utils.PrettyApiErr(ctx, &resp.Diagnostics, err)
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error deleting Certificate", fmt.Sprintf("Calling API for delete: %v", errStr))
@@ -354,9 +352,11 @@ func (r *certificatesResource) ImportState(ctx context.Context, req resource.Imp
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), idParts[0])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("region"), idParts[1])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("cert_id"), idParts[2])...)
+	ctx = utils.SetAndLogStateFields(ctx, &resp.Diagnostics, &resp.State, map[string]interface{}{
+		"project_id": idParts[0],
+		"region":     idParts[1],
+		"cert_id":    idParts[2],
+	})
 	tflog.Info(ctx, "Certificate state imported")
 }
 

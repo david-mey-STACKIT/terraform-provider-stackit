@@ -88,7 +88,7 @@ resource "stackit_server" "server" {
 }
 
 # Create example credentials for observability of the ALB
-# Create real credentials in your stackit observability
+# Create real credentials in your STACKIT observability
 resource "stackit_loadbalancer_observability_credential" "observability" {
   project_id   = var.project_id
   display_name = "my-cred"
@@ -108,7 +108,7 @@ resource "tls_self_signed_cert" "example" {
 
   subject {
     common_name  = "localhost"
-    organization = "Stackit Test"
+    organization = "STACKIT Test"
   }
 
   validity_period_hours = 12

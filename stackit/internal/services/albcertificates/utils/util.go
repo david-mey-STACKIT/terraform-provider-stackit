@@ -6,7 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/stackitcloud/stackit-sdk-go/core/config"
-	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates"
+	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates/v2api"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/utils"
 )
@@ -16,8 +16,8 @@ func ConfigureClient(ctx context.Context, providerData *core.ProviderData, diags
 		config.WithCustomAuth(providerData.RoundTripper),
 		utils.UserAgentConfigOption(providerData.Version),
 	}
-	if providerData.ALBCustomEndpoint != "" {
-		apiClientConfigOptions = append(apiClientConfigOptions, config.WithEndpoint(providerData.ALBCustomEndpoint))
+	if providerData.ALBCertificatesCustomEndpoint != "" {
+		apiClientConfigOptions = append(apiClientConfigOptions, config.WithEndpoint(providerData.ALBCertificatesCustomEndpoint))
 	}
 	apiClient, err := certSdk.NewAPIClient(apiClientConfigOptions...)
 	if err != nil {

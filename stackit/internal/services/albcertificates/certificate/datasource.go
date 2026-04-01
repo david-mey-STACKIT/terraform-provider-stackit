@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates"
+	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates/v2api"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/conversion"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	certUtils "github.com/stackitcloud/terraform-provider-stackit/stackit/internal/services/albcertificates/utils"
@@ -56,10 +56,10 @@ func (r *certDataSource) Configure(ctx context.Context, req datasource.Configure
 func (r *certDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	descriptions := map[string]string{
 		"main":        "Certificates resource schema.",
-		"id":          "Terraform's internal resource ID. It is structured as `project_id`,`region`,`name`.",
+		"id":          "Terraform's internal resource ID. It is structured as `project_id`,`region`,`cert_id`.",
 		"project_id":  "STACKIT project ID to which the certificate is associated.",
 		"region":      "The resource region (e.g. eu01). If not defined, the provider region is used.",
-		"cert-id":     "The ID of the certificate.",
+		"cert_id":     "The ID of the certificate.",
 		"name":        "Certificate name.",
 		"private_key": "The PEM encoded private key part",
 		"public_key":  "The PEM encoded public key part",
@@ -87,7 +87,7 @@ func (r *certDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 				Computed:    true,
 			},
 			"cert_id": schema.StringAttribute{
-				Description: descriptions["cert-id"],
+				Description: descriptions["cert_id"],
 				Required:    true,
 			},
 			"private_key": schema.StringAttribute{
@@ -120,7 +120,7 @@ func (r *certDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	ctx = tflog.SetField(ctx, "region", region)
 	ctx = tflog.SetField(ctx, "cert_id", certId)
 
-	certResp, err := r.client.GetCertificate(ctx, projectId, region, certId).Execute()
+	certResp, err := r.client.DefaultAPI.GetCertificate(ctx, projectId, region, certId).Execute()
 	if err != nil {
 		utils.LogError(
 			ctx,

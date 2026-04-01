@@ -9,14 +9,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	sdkClients "github.com/stackitcloud/stackit-sdk-go/core/clients"
 	"github.com/stackitcloud/stackit-sdk-go/core/config"
-	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates"
+	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates/v2api"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/utils"
 )
 
 const (
 	testVersion        = "1.2.3"
-	testCustomEndpoint = "https://alb-custom-endpoint.api.stackit.cloud"
+	testCustomEndpoint = "https://alb-cert-custom-endpoint.api.stackit.cloud"
 )
 
 func TestConfigureClient(t *testing.T) {
@@ -58,8 +58,8 @@ func TestConfigureClient(t *testing.T) {
 			name: "custom endpoint",
 			args: args{
 				providerData: &core.ProviderData{
-					Version:           testVersion,
-					ALBCustomEndpoint: testCustomEndpoint,
+					Version:                       testVersion,
+					ALBCertificatesCustomEndpoint: testCustomEndpoint,
 				},
 			},
 			expected: func() *certSdk.APIClient {

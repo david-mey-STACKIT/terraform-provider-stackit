@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	stackitSdkConfig "github.com/stackitcloud/stackit-sdk-go/core/config"
 	"github.com/stackitcloud/stackit-sdk-go/core/utils"
-	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates"
+	certSdk "github.com/stackitcloud/stackit-sdk-go/services/certificates/v2api"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/testutil"
 )
@@ -51,11 +51,12 @@ func TestAccCertResourceMin(t *testing.T) {
 				ConfigVariables: testConfigVarsMin,
 				Config:          testutil.CertProviderConfig() + resourceMinConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// Load balancer instance resource
+					// ALB Certificate instance resource
 					resource.TestCheckResourceAttr("stackit_alb_certificate.certificate", "project_id", testutil.ConvertConfigVariable(testConfigVarsMin["project_id"])),
 					resource.TestCheckResourceAttr("stackit_alb_certificate.certificate", "name", testutil.ConvertConfigVariable(testConfigVarsMin["cert_name"])),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "public_key"),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "private_key"),
+					resource.TestCheckResourceAttrPair("stackit_alb_certificate.certificate", "private_key", "tls_self_signed_cert.test", "private_key_pem"),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "region"),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "id"),
 				),
@@ -74,7 +75,7 @@ func TestAccCertResourceMin(t *testing.T) {
 					testutil.CertProviderConfig()+resourceMinConfig,
 				),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// Load balancer instance
+					// ALB Certificate instance
 					resource.TestCheckResourceAttr("data.stackit_alb_certificate.certificate", "project_id", testutil.ConvertConfigVariable(testConfigVarsMin["project_id"])),
 					resource.TestCheckResourceAttr("data.stackit_alb_certificate.certificate", "name", testutil.ConvertConfigVariable(testConfigVarsMin["cert_name"])),
 					resource.TestCheckResourceAttrSet("data.stackit_alb_certificate.certificate", "public_key"),
@@ -143,12 +144,13 @@ func TestAccCertResourceMax(t *testing.T) {
 				ConfigVariables: testConfigVarsMax,
 				Config:          testutil.CertProviderConfig() + resourceMaxConfig,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// Load balancer instance resource
+					// ALB Certificate instance resource
 					resource.TestCheckResourceAttr("stackit_alb_certificate.certificate", "project_id", testutil.ConvertConfigVariable(testConfigVarsMax["project_id"])),
 					resource.TestCheckResourceAttr("stackit_alb_certificate.certificate", "name", testutil.ConvertConfigVariable(testConfigVarsMax["cert_name"])),
 					resource.TestCheckResourceAttr("stackit_alb_certificate.certificate", "region", testutil.ConvertConfigVariable(testConfigVarsMax["region"])),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "public_key"),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "private_key"),
+					resource.TestCheckResourceAttrPair("stackit_alb_certificate.certificate", "private_key", "tls_self_signed_cert.test", "private_key_pem"),
 					resource.TestCheckResourceAttrSet("stackit_alb_certificate.certificate", "id"),
 				),
 			},
@@ -166,7 +168,7 @@ func TestAccCertResourceMax(t *testing.T) {
 					testutil.CertProviderConfig()+resourceMaxConfig,
 				),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					// Load balancer instance
+					// ALB Certificate instance
 					resource.TestCheckResourceAttr("data.stackit_alb_certificate.certificate", "project_id", testutil.ConvertConfigVariable(testConfigVarsMax["project_id"])),
 					resource.TestCheckResourceAttr("data.stackit_alb_certificate.certificate", "name", testutil.ConvertConfigVariable(testConfigVarsMax["cert_name"])),
 					resource.TestCheckResourceAttr("data.stackit_alb_certificate.certificate", "region", testutil.ConvertConfigVariable(testConfigVarsMax["region"])),
@@ -248,23 +250,23 @@ func testAccCheckCertDestroy(s *terraform.State) error {
 		certificateToDestroy = append(certificateToDestroy, certificateName)
 	}
 
-	certificateResp, err := client.ListCertificates(ctx, testutil.ProjectId, region).Execute()
+	certificateResp, err := client.DefaultAPI.ListCertificates(ctx, testutil.ProjectId, region).Execute()
 	if err != nil {
 		return fmt.Errorf("getting certificateResp: %w", err)
 	}
 
-	if certificateResp.Items == nil || (certificateResp.Items != nil && len(*certificateResp.Items) == 0) {
+	if certificateResp.Items == nil || (certificateResp.Items != nil && len(certificateResp.Items) == 0) {
 		fmt.Print("No certificates found for project \n")
 		return nil
 	}
 
-	items := *certificateResp.Items
+	items := certificateResp.Items
 	for i := range items {
 		if items[i].Name == nil {
 			continue
 		}
 		if utils.Contains(certificateToDestroy, *items[i].Name) {
-			_, err := client.DeleteCertificateExecute(ctx, testutil.ProjectId, region, *items[i].Id)
+			_, err := client.DefaultAPI.DeleteCertificate(ctx, testutil.ProjectId, region, *items[i].Id).Execute()
 			if err != nil {
 				return fmt.Errorf("destroying certificate %s during CheckDestroy: %w", *items[i].Name, err)
 			}
