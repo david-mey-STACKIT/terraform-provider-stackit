@@ -90,10 +90,6 @@ func (r *certDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 				Description: descriptions["cert_id"],
 				Required:    true,
 			},
-			"private_key": schema.StringAttribute{
-				Description: descriptions["private_key"],
-				Computed:    true,
-			},
 			"public_key": schema.StringAttribute{
 				Description: descriptions["public_key"],
 				Computed:    true,
@@ -104,7 +100,7 @@ func (r *certDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 
 // Read refreshes the Terraform state with the latest data.
 func (r *certDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) { // nolint:gocritic // function signature required by Terraform
-	var model Model
+	var model DataSourceModel
 	diags := req.Config.Get(ctx, &model)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -139,7 +135,7 @@ func (r *certDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	ctx = core.LogResponse(ctx)
 
 	// Map response body to schema
-	err = mapFields(certResp, &model, region)
+	err = mapDataFields(certResp, &model, region)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error reading certificate", fmt.Sprintf("Processing API payload: %v", err))
 		return

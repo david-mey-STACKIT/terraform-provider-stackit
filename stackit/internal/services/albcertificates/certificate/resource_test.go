@@ -21,13 +21,15 @@ const (
 
 func fixtureModel(mods ...func(m *Model)) *Model {
 	resp := &Model{
-		Id:         types.StringValue(tfID),
-		ProjectId:  types.StringValue(projectID),
-		Region:     types.StringValue(region),
-		CertID:     types.StringValue(certID),
-		Name:       types.StringValue(certName),
+		DataSourceModel: DataSourceModel{
+			Id:        types.StringValue(tfID),
+			ProjectId: types.StringValue(projectID),
+			Region:    types.StringValue(region),
+			CertID:    types.StringValue(certID),
+			Name:      types.StringValue(certName),
+			PublicKey: types.StringValue(certPublicKey),
+		},
 		PrivateKey: types.StringValue(certPrivateKey),
-		PublicKey:  types.StringValue(certPublicKey),
 	}
 	for _, mod := range mods {
 		mod(resp)
@@ -37,10 +39,12 @@ func fixtureModel(mods ...func(m *Model)) *Model {
 
 func fixtureModelNull(mods ...func(m *Model)) *Model {
 	resp := &Model{
-		Id:        types.StringNull(),
-		ProjectId: types.StringNull(),
-		Name:      types.StringNull(),
-		Region:    types.StringNull(),
+		DataSourceModel: DataSourceModel{
+			Id:        types.StringNull(),
+			ProjectId: types.StringNull(),
+			Name:      types.StringNull(),
+			Region:    types.StringNull(),
+		},
 	}
 	for _, mod := range mods {
 		mod(resp)
@@ -124,7 +128,7 @@ func TestMapFields(t *testing.T) {
 			description: "valid full model",
 			input:       fixtureCertificate(),
 			output: &Model{
-				ProjectId: types.StringValue(projectID),
+				DataSourceModel: DataSourceModel{ProjectId: types.StringValue(projectID)},
 			},
 			region: testRegion,
 			expected: fixtureModel(func(m *Model) {
@@ -136,7 +140,7 @@ func TestMapFields(t *testing.T) {
 			description: "error input nil",
 			input:       nil,
 			output: &Model{
-				ProjectId: types.StringValue(projectID),
+				DataSourceModel: DataSourceModel{ProjectId: types.StringValue(projectID)},
 			},
 			region:   testRegion,
 			expected: fixtureModel(),
@@ -156,8 +160,10 @@ func TestMapFields(t *testing.T) {
 				m.Id = nil
 			}),
 			output: &Model{
-				ProjectId: types.StringValue(projectID),
-				CertID:    types.StringValue(""),
+				DataSourceModel: DataSourceModel{
+					ProjectId: types.StringValue(projectID),
+					CertID:    types.StringValue(""),
+				},
 			},
 			region:   testRegion,
 			expected: fixtureModel(),
@@ -167,8 +173,10 @@ func TestMapFields(t *testing.T) {
 			description: "valid name in model",
 			input:       fixtureCertificate(),
 			output: &Model{
-				ProjectId: types.StringValue(projectID),
-				CertID:    types.StringValue(certID),
+				DataSourceModel: DataSourceModel{
+					ProjectId: types.StringValue(projectID),
+					CertID:    types.StringValue(certID),
+				},
 			},
 			region: testRegion,
 			expected: fixtureModel(func(m *Model) {

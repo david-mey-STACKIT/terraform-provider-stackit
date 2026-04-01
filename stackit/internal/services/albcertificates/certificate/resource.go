@@ -33,14 +33,20 @@ var (
 	_ resource.ResourceWithModifyPlan  = &certificatesResource{}
 )
 
+// DataSourceModel - Base fields shared by both Resource and Data Source
+type DataSourceModel struct {
+	Id        types.String `tfsdk:"id"`
+	ProjectId types.String `tfsdk:"project_id"`
+	Region    types.String `tfsdk:"region"`
+	CertID    types.String `tfsdk:"cert_id"`
+	Name      types.String `tfsdk:"name"`
+	PublicKey types.String `tfsdk:"public_key"`
+}
+
+// Model - For Resource includes the PrivateKey
 type Model struct {
-	Id         types.String `tfsdk:"id"` // needed by TF
-	ProjectId  types.String `tfsdk:"project_id"`
-	Region     types.String `tfsdk:"region"`
-	CertID     types.String `tfsdk:"cert_id"`
-	Name       types.String `tfsdk:"name"`
+	DataSourceModel
 	PrivateKey types.String `tfsdk:"private_key"`
-	PublicKey  types.String `tfsdk:"public_key"`
 }
 
 // NewCertificatesResource is a helper function to simplify the provider implementation.
@@ -373,8 +379,15 @@ func toCreatePayload(model *Model) (*certSdk.CreateCertificatePayload, error) {
 	}, nil
 }
 
-// mapFields and all other map functions in this file translate an API resource into a Terraform model.
 func mapFields(cert *certSdk.GetCertificateResponse, m *Model, region string) error {
+	if m == nil {
+		return fmt.Errorf("model input is nil")
+	}
+	return mapDataFields(cert, &m.DataSourceModel, region)
+}
+
+// mapFields and all other map functions in this file translate an API resource into a Terraform model.
+func mapDataFields(cert *certSdk.GetCertificateResponse, m *DataSourceModel, region string) error {
 	if cert == nil {
 		return fmt.Errorf("response input is nil")
 	}
