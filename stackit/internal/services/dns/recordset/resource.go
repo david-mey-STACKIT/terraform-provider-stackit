@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -16,8 +17,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/stackitcloud/stackit-sdk-go/services/dns"
-	"github.com/stackitcloud/stackit-sdk-go/services/dns/wait"
+	dns "github.com/stackitcloud/stackit-sdk-go/services/dns/v1api"
+	"github.com/stackitcloud/stackit-sdk-go/services/dns/v1api/wait"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/conversion"
 	"github.com/stackitcloud/terraform-provider-stackit/stackit/internal/core"
 	dnsUtils "github.com/stackitcloud/terraform-provider-stackit/stackit/internal/services/dns/utils"
@@ -41,11 +42,16 @@ type Model struct {
 	Comment     types.String `tfsdk:"comment"`
 	Name        types.String `tfsdk:"name"`
 	Records     types.List   `tfsdk:"records"`
-	TTL         types.Int64  `tfsdk:"ttl"`
+	TTL         types.Int32  `tfsdk:"ttl"`
 	Type        types.String `tfsdk:"type"`
 	Error       types.String `tfsdk:"error"`
 	State       types.String `tfsdk:"state"`
 	FQDN        types.String `tfsdk:"fqdn"`
+}
+
+type ResourceModel struct {
+	Model
+	Timeouts timeouts.Value `tfsdk:"timeouts"`
 }
 
 // NewRecordSetResource is a helper function to simplify the provider implementation.
@@ -79,7 +85,7 @@ func (r *recordSetResource) Configure(ctx context.Context, req resource.Configur
 }
 
 // Schema defines the schema for the resource.
-func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *recordSetResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description: "DNS Record Set Resource schema.",
 		Attributes: map[string]schema.Attribute{
@@ -144,13 +150,13 @@ func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					listvalidator.ValueStringsAre(validate.RecordSet()),
 				},
 			},
-			"ttl": schema.Int64Attribute{
+			"ttl": schema.Int32Attribute{
 				Description: "Time to live. E.g. 3600",
 				Optional:    true,
 				Computed:    true,
-				Validators: []validator.Int64{
-					int64validator.AtLeast(60),
-					int64validator.AtMost(99999999),
+				Validators: []validator.Int32{
+					int32validator.AtLeast(60),
+					int32validator.AtMost(99999999),
 				},
 			},
 			"type": schema.StringAttribute{
@@ -186,6 +192,7 @@ func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Description: "Record set state.",
 				Computed:    true,
 			},
+			"timeouts": timeouts.AttributesAll(ctx),
 		},
 	}
 }
@@ -193,12 +200,21 @@ func (r *recordSetResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 // Create creates the resource and sets the initial Terraform state.
 func (r *recordSetResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) { // nolint:gocritic // function signature required by Terraform
 	// Retrieve values from plan
-	var model Model
+	var model ResourceModel
 	diags := req.Plan.Get(ctx, &model)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	waiterTimeout := wait.CreateRecordSetWaitHandler(ctx, r.client.DefaultAPI, "", "", "").GetTimeout()
+	createTimeout, diags := model.Timeouts.Create(ctx, waiterTimeout+core.DefaultTimeoutMargin)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 
 	ctx = core.InitProviderContext(ctx)
 
@@ -208,14 +224,14 @@ func (r *recordSetResource) Create(ctx context.Context, req resource.CreateReque
 	ctx = tflog.SetField(ctx, "zone_id", zoneId)
 
 	// Generate API request body from model
-	payload, err := toCreatePayload(&model)
+	payload, err := toCreatePayload(&model.Model)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error creating record set", fmt.Sprintf("Creating API payload: %v", err))
 		return
 	}
 	// Create new recordset
-	recordSetResp, err := r.client.CreateRecordSet(ctx, projectId, zoneId).CreateRecordSetPayload(*payload).Execute()
-	if err != nil || recordSetResp.Rrset == nil || recordSetResp.Rrset.Id == nil {
+	recordSetResp, err := r.client.DefaultAPI.CreateRecordSet(ctx, projectId, zoneId).CreateRecordSetPayload(*payload).Execute()
+	if err != nil || recordSetResp.Rrset.Id == "" {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error creating record set", fmt.Sprintf("Calling API: %v", err))
 		return
 	}
@@ -226,20 +242,20 @@ func (r *recordSetResource) Create(ctx context.Context, req resource.CreateReque
 	ctx = utils.SetAndLogStateFields(ctx, &resp.Diagnostics, &resp.State, map[string]any{
 		"project_id":    projectId,
 		"zone_id":       zoneId,
-		"record_set_id": *recordSetResp.Rrset.Id,
+		"record_set_id": recordSetResp.Rrset.Id,
 	})
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	waitResp, err := wait.CreateRecordSetWaitHandler(ctx, r.client, projectId, zoneId, *recordSetResp.Rrset.Id).WaitWithContext(ctx)
+	waitResp, err := wait.CreateRecordSetWaitHandler(ctx, r.client.DefaultAPI, projectId, zoneId, recordSetResp.Rrset.Id).WaitWithContext(ctx)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error creating record set", fmt.Sprintf("Instance creation waiting: %v", err))
 		return
 	}
 
 	// Map response body to schema
-	err = mapFields(ctx, waitResp, &model)
+	err = mapFields(ctx, waitResp, &model.Model)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error creating record set", fmt.Sprintf("Processing API payload: %v", err))
 		return
@@ -255,12 +271,20 @@ func (r *recordSetResource) Create(ctx context.Context, req resource.CreateReque
 
 // Read refreshes the Terraform state with the latest data.
 func (r *recordSetResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) { // nolint:gocritic // function signature required by Terraform
-	var model Model
+	var model ResourceModel
 	diags := req.State.Get(ctx, &model)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	readTimeout, diags := model.Timeouts.Read(ctx, core.DefaultOperationTimeout)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 
 	ctx = core.InitProviderContext(ctx)
 
@@ -271,12 +295,12 @@ func (r *recordSetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	ctx = tflog.SetField(ctx, "zone_id", zoneId)
 	ctx = tflog.SetField(ctx, "record_set_id", recordSetId)
 
-	recordSetResp, err := r.client.GetRecordSet(ctx, projectId, zoneId, recordSetId).Execute()
+	recordSetResp, err := r.client.DefaultAPI.GetRecordSet(ctx, projectId, zoneId, recordSetId).Execute()
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error reading record set", fmt.Sprintf("Calling API: %v", err))
 		return
 	}
-	if recordSetResp != nil && recordSetResp.Rrset.State != nil && *recordSetResp.Rrset.State == dns.RECORDSETSTATE_DELETE_SUCCEEDED {
+	if recordSetResp != nil && recordSetResp.Rrset.State == wait.RECORDSETSTATE_DELETE_SUCCEEDED {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -284,7 +308,7 @@ func (r *recordSetResource) Read(ctx context.Context, req resource.ReadRequest, 
 	ctx = core.LogResponse(ctx)
 
 	// Map response body to schema
-	err = mapFields(ctx, recordSetResp, &model)
+	err = mapFields(ctx, recordSetResp, &model.Model)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error reading record set", fmt.Sprintf("Processing API payload: %v", err))
 		return
@@ -302,12 +326,21 @@ func (r *recordSetResource) Read(ctx context.Context, req resource.ReadRequest, 
 // Update updates the resource and sets the updated Terraform state on success.
 func (r *recordSetResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) { // nolint:gocritic // function signature required by Terraform
 	// Retrieve values from plan
-	var model Model
+	var model ResourceModel
 	diags := req.Plan.Get(ctx, &model)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	waiterTimeout := wait.PartialUpdateRecordSetWaitHandler(ctx, r.client.DefaultAPI, "", "", "").GetTimeout()
+	updateTimeout, diags := model.Timeouts.Update(ctx, waiterTimeout+core.DefaultTimeoutMargin)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
 
 	ctx = core.InitProviderContext(ctx)
 
@@ -319,13 +352,13 @@ func (r *recordSetResource) Update(ctx context.Context, req resource.UpdateReque
 	ctx = tflog.SetField(ctx, "record_set_id", recordSetId)
 
 	// Generate API request body from model
-	payload, err := toUpdatePayload(&model)
+	payload, err := toUpdatePayload(&model.Model)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error updating record set", fmt.Sprintf("Creating API payload: %v", err))
 		return
 	}
 	// Update recordset
-	_, err = r.client.PartialUpdateRecordSet(ctx, projectId, zoneId, recordSetId).PartialUpdateRecordSetPayload(*payload).Execute()
+	_, err = r.client.DefaultAPI.PartialUpdateRecordSet(ctx, projectId, zoneId, recordSetId).PartialUpdateRecordSetPayload(*payload).Execute()
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error updating record set", err.Error())
 		return
@@ -333,13 +366,13 @@ func (r *recordSetResource) Update(ctx context.Context, req resource.UpdateReque
 
 	ctx = core.LogResponse(ctx)
 
-	waitResp, err := wait.PartialUpdateRecordSetWaitHandler(ctx, r.client, projectId, zoneId, recordSetId).WaitWithContext(ctx)
+	waitResp, err := wait.PartialUpdateRecordSetWaitHandler(ctx, r.client.DefaultAPI, projectId, zoneId, recordSetId).WaitWithContext(ctx)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error updating record set", fmt.Sprintf("Instance update waiting: %v", err))
 		return
 	}
 
-	err = mapFields(ctx, waitResp, &model)
+	err = mapFields(ctx, waitResp, &model.Model)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error updating record set", fmt.Sprintf("Processing API payload: %v", err))
 		return
@@ -355,12 +388,21 @@ func (r *recordSetResource) Update(ctx context.Context, req resource.UpdateReque
 // Delete deletes the resource and removes the Terraform state on success.
 func (r *recordSetResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) { // nolint:gocritic // function signature required by Terraform
 	// Retrieve values from plan
-	var model Model
+	var model ResourceModel
 	diags := req.State.Get(ctx, &model)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	waiterTimeout := wait.DeleteRecordSetWaitHandler(ctx, r.client.DefaultAPI, "", "", "").GetTimeout()
+	deleteTimeout, diags := model.Timeouts.Delete(ctx, waiterTimeout+core.DefaultTimeoutMargin)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
 
 	ctx = core.InitProviderContext(ctx)
 
@@ -372,14 +414,14 @@ func (r *recordSetResource) Delete(ctx context.Context, req resource.DeleteReque
 	ctx = tflog.SetField(ctx, "record_set_id", recordSetId)
 
 	// Delete existing record set
-	_, err := r.client.DeleteRecordSet(ctx, projectId, zoneId, recordSetId).Execute()
+	_, err := r.client.DefaultAPI.DeleteRecordSet(ctx, projectId, zoneId, recordSetId).Execute()
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error deleting record set", fmt.Sprintf("Calling API: %v", err))
 	}
 
 	ctx = core.LogResponse(ctx)
 
-	_, err = wait.DeleteRecordSetWaitHandler(ctx, r.client, projectId, zoneId, recordSetId).WaitWithContext(ctx)
+	_, err = wait.DeleteRecordSetWaitHandler(ctx, r.client.DefaultAPI, projectId, zoneId, recordSetId).WaitWithContext(ctx)
 	if err != nil {
 		core.LogAndAddError(ctx, &resp.Diagnostics, "Error deleting record set", fmt.Sprintf("Instance deletion waiting: %v", err))
 		return
@@ -399,7 +441,7 @@ func (r *recordSetResource) ImportState(ctx context.Context, req resource.Import
 		return
 	}
 
-	ctx = utils.SetAndLogStateFields(ctx, &resp.Diagnostics, &resp.State, map[string]interface{}{
+	ctx = utils.SetAndLogStateFields(ctx, &resp.Diagnostics, &resp.State, map[string]any{
 		"project_id":    idParts[0],
 		"zone_id":       idParts[1],
 		"record_set_id": idParts[2],
@@ -408,7 +450,7 @@ func (r *recordSetResource) ImportState(ctx context.Context, req resource.Import
 }
 
 func mapFields(ctx context.Context, recordSetResp *dns.RecordSetResponse, model *Model) error {
-	if recordSetResp == nil || recordSetResp.Rrset == nil {
+	if recordSetResp == nil {
 		return fmt.Errorf("response input is nil")
 	}
 	if model == nil {
@@ -419,8 +461,8 @@ func mapFields(ctx context.Context, recordSetResp *dns.RecordSetResponse, model 
 	var recordSetId string
 	if model.RecordSetId.ValueString() != "" {
 		recordSetId = model.RecordSetId.ValueString()
-	} else if recordSet.Id != nil {
-		recordSetId = *recordSet.Id
+	} else if recordSet.Id != "" {
+		recordSetId = recordSet.Id
 	} else {
 		return fmt.Errorf("record set id not present")
 	}
@@ -430,8 +472,8 @@ func mapFields(ctx context.Context, recordSetResp *dns.RecordSetResponse, model 
 	} else {
 		respRecords := []string{}
 
-		for _, record := range *recordSet.Records {
-			respRecords = append(respRecords, *record.Content)
+		for _, record := range recordSet.Records {
+			respRecords = append(respRecords, record.Content)
 		}
 
 		modelRecords, err := utils.ListValuetoStringSlice(model.Records)
@@ -451,17 +493,17 @@ func mapFields(ctx context.Context, recordSetResp *dns.RecordSetResponse, model 
 	model.Id = utils.BuildInternalTerraformId(
 		model.ProjectId.ValueString(), model.ZoneId.ValueString(), recordSetId,
 	)
-	model.RecordSetId = types.StringPointerValue(recordSet.Id)
+	model.RecordSetId = types.StringValue(recordSet.Id)
 	model.Active = types.BoolPointerValue(recordSet.Active)
 	model.Comment = types.StringPointerValue(recordSet.Comment)
 	model.Error = types.StringPointerValue(recordSet.Error)
 	if model.Name.IsNull() || model.Name.IsUnknown() {
-		model.Name = types.StringPointerValue(recordSet.Name)
+		model.Name = types.StringValue(recordSet.Name)
 	}
-	model.FQDN = types.StringPointerValue(recordSet.Name)
-	model.State = types.StringValue(string(recordSet.GetState()))
-	model.TTL = types.Int64PointerValue(recordSet.Ttl)
-	model.Type = types.StringValue(string(recordSet.GetType()))
+	model.FQDN = types.StringValue(recordSet.Name)
+	model.State = types.StringValue(recordSet.State)
+	model.TTL = types.Int32Value(recordSet.Ttl)
+	model.Type = types.StringValue(recordSet.Type)
 	return nil
 }
 
@@ -477,16 +519,16 @@ func toCreatePayload(model *Model) (*dns.CreateRecordSetPayload, error) {
 			return nil, fmt.Errorf("expected record at index %d to be of type %T, got %T", i, types.String{}, record)
 		}
 		records = append(records, dns.RecordPayload{
-			Content: conversion.StringValueToPointer(recordString),
+			Content: recordString.ValueString(),
 		})
 	}
 
 	return &dns.CreateRecordSetPayload{
 		Comment: conversion.StringValueToPointer(model.Comment),
-		Name:    conversion.StringValueToPointer(model.Name),
-		Records: &records,
-		Ttl:     conversion.Int64ValueToPointer(model.TTL),
-		Type:    dns.CreateRecordSetPayloadGetTypeAttributeType(conversion.StringValueToPointer(model.Type)),
+		Name:    model.Name.ValueString(),
+		Records: records,
+		Ttl:     conversion.Int32ValueToPointer(model.TTL),
+		Type:    model.Type.ValueString(),
 	}, nil
 }
 
@@ -502,14 +544,14 @@ func toUpdatePayload(model *Model) (*dns.PartialUpdateRecordSetPayload, error) {
 			return nil, fmt.Errorf("expected record at index %d to be of type %T, got %T", i, types.String{}, record)
 		}
 		records = append(records, dns.RecordPayload{
-			Content: conversion.StringValueToPointer(recordString),
+			Content: recordString.ValueString(),
 		})
 	}
 
 	return &dns.PartialUpdateRecordSetPayload{
 		Comment: conversion.StringValueToPointer(model.Comment),
 		Name:    conversion.StringValueToPointer(model.Name),
-		Records: &records,
-		Ttl:     conversion.Int64ValueToPointer(model.TTL),
+		Records: records,
+		Ttl:     conversion.Int32ValueToPointer(model.TTL),
 	}, nil
 }
